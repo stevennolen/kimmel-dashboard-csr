@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { Lead, FilterState, TabId, ContestState, Settings } from './types'
-import { DEFAULT_SETTINGS, DEFAULT_CONTEST, DEFAULT_FILTERS } from './config/defaults'
-import { useLocalStorage } from './hooks/useLocalStorage'
+import { DEFAULT_CONTEST, DEFAULT_FILTERS } from './config/defaults'
+import { useSupabaseData } from './hooks/useSupabaseData'
 import {
   getCSRStats, getTeamStats, getDaysRemaining, applyFilters,
   generateLeadNumber, today,
@@ -24,10 +24,14 @@ import SalesFunnelBar   from './components/charts/SalesFunnelBar'
 import DailyTrendChart  from './components/charts/DailyTrendChart'
 
 export default function App() {
-  // ── Persisted state ─────────────────────────────────────────────────────────
-  const [settings,     setSettings]     = useLocalStorage('kimmel_settings', DEFAULT_SETTINGS)
-  const [leads,        setLeads]        = useLocalStorage<Lead[]>('kimmel_leads', [])
-  const [contestState, setContestState] = useLocalStorage('kimmel_contest', DEFAULT_CONTEST)
+  // ── Supabase data ────────────────────────────────────────────────────────────
+  const {
+    settings, setSettings,
+    leads,
+    contestState, setContestState,
+    addLead, updateLead, deleteLead, clearLeads,
+    loading, error,
+  } = useSupabaseData()
 
   // ── UI state ─────────────────────────────────────────────────────────────────
   const [activeTab,    setActiveTab]    = useState<TabId>('overview')
@@ -39,9 +43,9 @@ export default function App() {
 
   // ── Derived values ────────────────────────────────────────────────────────────
   const daysRemaining  = getDaysRemaining(settings, contestState)
-  const csrStats       = useMemo(() => getCSRStats(settings, leads),         [settings, leads])
-  const teamStats      = useMemo(() => getTeamStats(leads, settings, csrStats), [leads, settings, csrStats])
-  const filteredLeads  = useMemo(() => applyFilters(leads, filters),         [leads, filters])
+  const csrStats       = useMemo(() => getCSRStats(settings, leads),             [settings, leads])
+  const teamStats      = useMemo(() => getTeamStats(leads, settings, csrStats),  [leads, settings, csrStats])
+  const filteredLeads  = useMemo(() => applyFilters(leads, filters),             [leads, filters])
   const hasFilters     = useMemo(() =>
     Object.entries(filters).some(([, v]) => typeof v === 'boolean' ? v : v !== ''),
     [filters],
@@ -55,19 +59,17 @@ export default function App() {
       leadNumber:  generateLeadNumber(leads),
       lastUpdated: today(),
     }
-    setLeads(prev => [...prev, newLead])
+    addLead(newLead)
     setAddingLead(false)
   }
 
   const handleUpdateLead = (updated: Lead) => {
-    setLeads(prev =>
-      prev.map(l => l.id === updated.id ? { ...updated, lastUpdated: today() } : l),
-    )
+    updateLead(updated)
     setEditingLead(null)
   }
 
   const handleDeleteLead = (id: string) => {
-    setLeads(prev => prev.filter(l => l.id !== id))
+    deleteLead(id)
   }
 
   // ── Contest control ───────────────────────────────────────────────────────────
@@ -80,6 +82,30 @@ export default function App() {
   const handleResetContest = () => setContestState(DEFAULT_CONTEST)
 
   const openModal  = addingLead || editingLead !== null
+
+  // ── Loading / error states ────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 border-2 border-kimmel-yellow border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-gray-500 text-sm">Loading dashboard…</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4">
+        <div className="card p-8 max-w-md text-center space-y-3">
+          <p className="text-red-400 font-bold">Failed to connect to Supabase</p>
+          <p className="text-gray-500 text-sm break-all">{error}</p>
+          <p className="text-gray-600 text-xs">Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set correctly.</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 font-sans">
@@ -180,7 +206,7 @@ export default function App() {
         onStartContest={handleStartContest}
         onPauseContest={handlePauseContest}
         onResetContest={handleResetContest}
-        onClearLeads={() => { if (window.confirm('Delete ALL leads? This cannot be undone.')) setLeads([]) }}
+        onClearLeads={() => { if (window.confirm('Delete ALL leads? This cannot be undone.')) clearLeads() }}
       />
 
       {/* ── Lead add / edit modal ───────────────────────────────────────────── */}
